@@ -1,3 +1,7 @@
+src/trash
+src/trash/*
+
+
 # Prerequisites
 *.d
 
