@@ -175,6 +175,8 @@ class HokuyoSpelRosNode : public rclcpp::Node {
   }
 
   ~HokuyoSpelRosNode() override {
+    HokuyoSpelRosNode::spelClientClose(sock_);
+
     clientRunning_.store(false);
     ::shutdown(sock_, SHUT_RDWR);
     ::close(sock_);
@@ -528,19 +530,27 @@ class HokuyoSpelRosNode : public rclcpp::Node {
       }
     }
 
-    type    = static_cast<uint8_t>(spnet::MsgType::CMD);
-    subtype = static_cast<uint8_t>(spnet::CmdType::STOP_RSF);
-    stamp  = this->now().nanoseconds();
-    sec    = static_cast<uint32_t>(stamp / 1000000000ULL);
-    nsec   = static_cast<uint32_t>(stamp % 1000000000ULL);
+    run.store(false);
+  }
+
+  void spelClientClose(
+    int sock)
+  {
+    uint32_t seq = 0;
+    std::vector<uint8_t> payload;
+    uint32_t payloadSize = payload.size();
+
+    uint8_t type    = static_cast<uint8_t>(spnet::MsgType::CMD);
+    uint8_t subtype = static_cast<uint8_t>(spnet::CmdType::STOP_RSF);
+    uint64_t stamp  = this->now().nanoseconds();
+    uint32_t sec    = static_cast<uint32_t>(stamp / 1000000000ULL);
+    uint32_t nsec   = static_cast<uint32_t>(stamp % 1000000000ULL);
     payload.clear();
     payloadSize = payload.size();
     spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
     subtype = static_cast<uint8_t>(spnet::CmdType::STOP_STREAMING);
     spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
-    std::this_thread::sleep_for(1s);
-
-    run.store(false);
+    RCLCPP_INFO(this->get_logger(), "Close RSF connection.");
   }
 
   int sock_;
