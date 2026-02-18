@@ -55,18 +55,22 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     Node("hokuyo_spel_ros_node")
   {
     // Subscriber
+    rclcpp::QoS cmdQos(rclcpp::KeepLast(10));
+    cmdQos.reliable();
+    cmdQos.transient_local();
+
     this->declare_parameter<std::string>("cmd_to_spel_topic", "/spel/cmd_to_spel");
     std::string cmdToSpelTopic;
     this->get_parameter("cmd_to_spel_topic", cmdToSpelTopic);
     cmdToSpelSub_ = this->create_subscription<std_msgs::msg::UInt8>(
-      cmdToSpelTopic, rclcpp::SensorDataQoS(),
+      cmdToSpelTopic, cmdQos,
       std::bind(&HokuyoSpelRosNode::cmdToSpelCallback, this, std::placeholders::_1));
 
     this->declare_parameter<std::string>("ip_address_topic", "/spel/ip_address");
     std::string ipAddressTopic;
     this->get_parameter("ip_address_topic", ipAddressTopic);
     ipAddressSub_ = this->create_subscription<std_msgs::msg::String>(
-      ipAddressTopic, rclcpp::SensorDataQoS(),
+      ipAddressTopic, cmdQos,
       std::bind(&HokuyoSpelRosNode::ipAddressCallback, this, std::placeholders::_1));
 
     // Publusher

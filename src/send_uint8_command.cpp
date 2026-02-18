@@ -45,7 +45,10 @@ int main(int argc, char** argv)
   std::string topic;
   node->get_parameter("topic", topic);
 
-  auto pub = node->create_publisher<std_msgs::msg::UInt8>(topic, rclcpp::QoS(10));
+  rclcpp::QoS cmdQos(rclcpp::KeepLast(10));
+  cmdQos.reliable();
+  cmdQos.transient_local();
+  auto pub = node->create_publisher<std_msgs::msg::UInt8>(topic, cmdQos);
 
   // Wait for DDS matching
   rclcpp::sleep_for(std::chrono::milliseconds(200));
