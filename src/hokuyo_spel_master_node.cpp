@@ -13,6 +13,7 @@
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -55,10 +56,24 @@ class HokuyoSpelMasterNode : public rclcpp::Node {
     Node("hokuyo_spel_master_node")
   {
     // Publisher
-    this->declare_parameter<std::string>("spel_cmd_topic", "/spel_cmd");
-    std::string spelCmdTopic;
-    this->get_parameter("spel_cmd_topic", spelCmdTopic);
-    spelCmdPub_ = this->create_publisher<std_msgs::msg::UInt8>(spelCmdTopic, 100);
+    rclcpp::QoS operationControllerQos(rclcpp::KeepLast(10));
+    operationControllerQos.reliable();
+    operationControllerQos.transient_local();
+
+    this->declare_parameter<std::string>("spel_start_topic", "/rsf_start");
+    std::string spelStartTopic;
+    this->get_parameter("spel_start_topic", spelStartTopic);
+    spelStartPub_ = this->create_publisher<std_msgs::msg::Empty>(spelStartTopic, operationControllerQos);
+
+    this->declare_parameter<std::string>("spel_stop_topic", "/rsf_stop");
+    std::string spelStopTopic;
+    this->get_parameter("spel_stop_topic", spelStopTopic);
+    spelStopPub_ = this->create_publisher<std_msgs::msg::Empty>(spelStopTopic, operationControllerQos);
+
+    this->declare_parameter<std::string>("spel_reset_topic", "/rsf_reset");
+    std::string spelResetTopic;
+    this->get_parameter("spel_reset_topic", spelResetTopic);
+    spelResetPub_ = this->create_publisher<std_msgs::msg::Empty>(spelResetTopic, operationControllerQos);
 
     this->declare_parameter<std::string>("spel_ip_address_topic", "/spel_ip_address");
     std::string spelIpAddressTopic;
@@ -479,12 +494,21 @@ class HokuyoSpelMasterNode : public rclcpp::Node {
           spnet::sendFrame(sock, ackcmd, 0, sec, nsec, seq, emptyPayload.data(), 0);
           RCLCPP_INFO(this->get_logger(), "SPEL master stops data streaming.");
   
-        } else if (cmdtype == spnet::CmdType::RESET_SOFTWARE) {
-          std_msgs::msg::UInt8 cmd;
-          cmd.data = 1;
-          spelCmdPub_->publish(cmd);
+        } else if (cmdtype == spnet::CmdType::START_RSF){
+          std_msgs::msg::Empty cmd;
+          spelStartPub_->publish(cmd);
+          RCLCPP_INFO(this->get_logger(), "SPEL master publishes start_rsf signal topic.");
+
+        } else if (cmdtype == spnet::CmdType::STOP_RSF){
+          std_msgs::msg::Empty cmd;
+          spelStopPub_->publish(cmd);
+          RCLCPP_INFO(this->get_logger(), "SPEL master publishes stop_rsf signal topic.");
+
+        } else if (cmdtype == spnet::CmdType::RESET_RSF) {
+          std_msgs::msg::Empty cmd;
+          spelResetPub_->publish(cmd);
           spnet::sendFrame(sock, ackcmd, 0, sec, nsec, seq, emptyPayload.data(), 0);
-          RCLCPP_INFO(this->get_logger(), "SPEL master publishes reset signal topic.");
+          RCLCPP_INFO(this->get_logger(), "SPEL master publishes reset_rsf signal topic.");
           
         } else if (cmdtype == spnet::CmdType::SET_IP_ADDRESS) {
           std::string str;
@@ -1042,7 +1066,9 @@ class HokuyoSpelMasterNode : public rclcpp::Node {
 
   mutable std::mutex mutex_;
 
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr spelCmdPub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr spelStartPub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr spelStopPub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr spelResetPub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr spelIpAddressPub_;
 
   std::atomic<bool> streamData_{false};

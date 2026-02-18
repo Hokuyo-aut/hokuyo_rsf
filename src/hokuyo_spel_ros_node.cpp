@@ -13,6 +13,7 @@
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -430,6 +431,8 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     payload.clear();
     payloadSize = payload.size();
     spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
+    subtype = static_cast<uint8_t>(spnet::CmdType::START_RSF);
+    spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
 
     while (run.load() && rclcpp::ok()) {
       std::this_thread::sleep_for(1s);
@@ -458,7 +461,15 @@ class HokuyoSpelRosNode : public rclcpp::Node {
           RCLCPP_INFO(this->get_logger(),
             "Hokuyo SPEL ROS2 node sends stop streaming command.");
         } else if (cmdToSpel.data == 3) {
-          subtype = static_cast<uint8_t>(spnet::CmdType::RESET_SOFTWARE);
+          subtype = static_cast<uint8_t>(spnet::CmdType::START_RSF);
+          RCLCPP_INFO(this->get_logger(),
+            "Hokuyo SPEL ROS2 node sends reset software command.");
+        } else if (cmdToSpel.data == 4) {
+          subtype = static_cast<uint8_t>(spnet::CmdType::STOP_RSF);
+          RCLCPP_INFO(this->get_logger(),
+            "Hokuyo SPEL ROS2 node sends reset software command.");
+        } else if (cmdToSpel.data == 5) {
+          subtype = static_cast<uint8_t>(spnet::CmdType::RESET_RSF);
           RCLCPP_INFO(this->get_logger(),
             "Hokuyo SPEL ROS2 node sends reset software command.");
         } else {
@@ -518,12 +529,14 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     }
 
     type    = static_cast<uint8_t>(spnet::MsgType::CMD);
-    subtype = static_cast<uint8_t>(spnet::CmdType::STOP_STREAMING);
+    subtype = static_cast<uint8_t>(spnet::CmdType::STOP_RSF);
     stamp  = this->now().nanoseconds();
     sec    = static_cast<uint32_t>(stamp / 1000000000ULL);
     nsec   = static_cast<uint32_t>(stamp % 1000000000ULL);
     payload.clear();
     payloadSize = payload.size();
+    spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
+    subtype = static_cast<uint8_t>(spnet::CmdType::STOP_STREAMING);
     spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
     std::this_thread::sleep_for(1s);
 

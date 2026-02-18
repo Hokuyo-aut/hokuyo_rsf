@@ -40,10 +40,11 @@ ros2 run hokuyo_spel_master send_uint8_command 1
 
 - 1: データストリーミング開始
 - 2: データストリーミング終了
-- 3: ソフトウェアリセット
+- 3: RSFセンサ計測開始　#岡本
+- 4: RSFセンサ計測終了　#岡本
+- 5: RSFセンサ計測値リセット (4と3を続けて送るのとほぼ同じ挙動)　#岡本
 
-SPEL Masterはソフトウェアリセットのコマンドを受け取った後、std_msgs::msg::Uint8（"/spel_cmd"）のデータをパブリッシュします。
-
+SPEL Masterは3~5のコマンドを受け取った後、それぞれに対応したstd_msgs::msg::Empty ("/rsf_start, /rsf_stop, /rsf_reset")のデータをパブリッシュします。
 
 
 ### IPアドレスの変更方法
