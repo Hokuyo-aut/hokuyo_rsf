@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>hokuyo_spel_master</name>
+  <name>hokuyo_rsf</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="n.akai.goo@gmail.com">akai</maintainer>

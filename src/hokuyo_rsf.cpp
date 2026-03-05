@@ -13,6 +13,7 @@
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -53,19 +54,24 @@ class HokuyoSpelRosNode : public rclcpp::Node {
   HokuyoSpelRosNode():
     Node("hokuyo_spel_ros_node")
   {
+    is_set_last_imu_rate_odom_ = false;
     // Subscriber
+    rclcpp::QoS cmdQos(rclcpp::KeepLast(10));
+    cmdQos.reliable();
+    cmdQos.transient_local();
+
     this->declare_parameter<std::string>("cmd_to_spel_topic", "/spel/cmd_to_spel");
     std::string cmdToSpelTopic;
     this->get_parameter("cmd_to_spel_topic", cmdToSpelTopic);
     cmdToSpelSub_ = this->create_subscription<std_msgs::msg::UInt8>(
-      cmdToSpelTopic, rclcpp::SensorDataQoS(),
+      cmdToSpelTopic, cmdQos,
       std::bind(&HokuyoSpelRosNode::cmdToSpelCallback, this, std::placeholders::_1));
 
     this->declare_parameter<std::string>("ip_address_topic", "/spel/ip_address");
     std::string ipAddressTopic;
     this->get_parameter("ip_address_topic", ipAddressTopic);
     ipAddressSub_ = this->create_subscription<std_msgs::msg::String>(
-      ipAddressTopic, rclcpp::SensorDataQoS(),
+      ipAddressTopic, cmdQos,
       std::bind(&HokuyoSpelRosNode::ipAddressCallback, this, std::placeholders::_1));
 
     // Publusher
@@ -103,6 +109,11 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     std::string imuRateOdomTopic;
     this->get_parameter("imu_rate_odom_topic", imuRateOdomTopic);
     imuRateOdomPub_ = this->create_publisher<nav_msgs::msg::Odometry>(imuRateOdomTopic, 100);
+
+    this->declare_parameter<std::string>("lidar_rate_odom_topic", "/spel/lidar_rate_odom");
+    std::string lidarRateOdomTopic;
+    this->get_parameter("lidar_rate_odom_topic", lidarRateOdomTopic);
+    lidarRateOdomPub_ = this->create_publisher<nav_msgs::msg::Odometry>(lidarRateOdomTopic, 100);
 
     this->declare_parameter<std::string>("nav_sat_fix_switch_topic", "/spel/nav_sat_fix_switch");
     std::string navSatFixSwitchTopic;
@@ -174,6 +185,8 @@ class HokuyoSpelRosNode : public rclcpp::Node {
   }
 
   ~HokuyoSpelRosNode() override {
+    HokuyoSpelRosNode::spelClientClose(sock_);
+
     clientRunning_.store(false);
     ::shutdown(sock_, SHUT_RDWR);
     ::close(sock_);
@@ -313,7 +326,9 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishHokuyoCloud2(hokuyoCloud2Pub_, stamp, lidarFrame_, pcHdr, points);
-
+          if(is_set_last_imu_rate_odom_){
+            hspPublisher_.publishOdom(lidarRateOdomPub_, stamp, odomFrame_, lidarFrame_, last_imu_rate_odom_pkt_);
+          }
         } else if (datatype == spnet::DataType::IMU) {
           spnet::ImuPacket pkt;
           if (!hspParser_.parseImuPayload(pl, pkt)) {
@@ -329,6 +344,8 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishOdom(imuRateOdomPub_, stamp, odomFrame_, lidarFrame_, pkt);
+          last_imu_rate_odom_pkt_ = pkt;
+          is_set_last_imu_rate_odom_ = true;
 
           static int tfcnt = 0;
           tfcnt++;
@@ -430,6 +447,8 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     payload.clear();
     payloadSize = payload.size();
     spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
+    subtype = static_cast<uint8_t>(spnet::CmdType::START_RSF);
+    spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
 
     while (run.load() && rclcpp::ok()) {
       std::this_thread::sleep_for(1s);
@@ -458,7 +477,15 @@ class HokuyoSpelRosNode : public rclcpp::Node {
           RCLCPP_INFO(this->get_logger(),
             "Hokuyo SPEL ROS2 node sends stop streaming command.");
         } else if (cmdToSpel.data == 3) {
-          subtype = static_cast<uint8_t>(spnet::CmdType::RESET_SOFTWARE);
+          subtype = static_cast<uint8_t>(spnet::CmdType::START_RSF);
+          RCLCPP_INFO(this->get_logger(),
+            "Hokuyo SPEL ROS2 node sends start software command.");
+        } else if (cmdToSpel.data == 4) {
+          subtype = static_cast<uint8_t>(spnet::CmdType::STOP_RSF);
+          RCLCPP_INFO(this->get_logger(),
+            "Hokuyo SPEL ROS2 node sends stop software command.");
+        } else if (cmdToSpel.data == 5) {
+          subtype = static_cast<uint8_t>(spnet::CmdType::RESET_RSF);
           RCLCPP_INFO(this->get_logger(),
             "Hokuyo SPEL ROS2 node sends reset software command.");
         } else {
@@ -517,23 +544,35 @@ class HokuyoSpelRosNode : public rclcpp::Node {
       }
     }
 
-    type    = static_cast<uint8_t>(spnet::MsgType::CMD);
-    subtype = static_cast<uint8_t>(spnet::CmdType::STOP_STREAMING);
-    stamp  = this->now().nanoseconds();
-    sec    = static_cast<uint32_t>(stamp / 1000000000ULL);
-    nsec   = static_cast<uint32_t>(stamp % 1000000000ULL);
+    run.store(false);
+  }
+
+  void spelClientClose(
+    int sock)
+  {
+    uint32_t seq = 0;
+    std::vector<uint8_t> payload;
+    uint32_t payloadSize = payload.size();
+
+    uint8_t type    = static_cast<uint8_t>(spnet::MsgType::CMD);
+    uint8_t subtype = static_cast<uint8_t>(spnet::CmdType::STOP_RSF);
+    uint64_t stamp  = this->now().nanoseconds();
+    uint32_t sec    = static_cast<uint32_t>(stamp / 1000000000ULL);
+    uint32_t nsec   = static_cast<uint32_t>(stamp % 1000000000ULL);
     payload.clear();
     payloadSize = payload.size();
     spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
-    std::this_thread::sleep_for(1s);
-
-    run.store(false);
+    subtype = static_cast<uint8_t>(spnet::CmdType::STOP_STREAMING);
+    spnet::sendFrame(sock, type, subtype, sec, nsec, seq, payload.data(), payloadSize);
+    RCLCPP_INFO(this->get_logger(), "Close RSF connection.");
   }
 
   int sock_;
   std::thread clientThread_;
   std::atomic<bool> clientRunning_{false};
   uint64_t latestStreamingStamp_;
+  spnet::OdomPacket last_imu_rate_odom_pkt_;
+  bool is_set_last_imu_rate_odom_;
 
   std::string spelIpAdress_;
   int spelPort_;
@@ -560,6 +599,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr hokuyoCloud2Pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imuPub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr imuRateOdomPub_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr lidarRateOdomPub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr navSatFixSwitchPub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr utmOdomPub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr switchOdomPub_;

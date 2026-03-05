@@ -44,8 +44,10 @@ enum class MsgType : uint8_t {
 enum class CmdType : uint8_t {
   START_STREAMING = 1,
   STOP_STREAMING  = 2,
-  RESET_SOFTWARE  = 3,
-  SET_IP_ADDRESS  = 4,
+  START_RSF       = 3,
+  STOP_RSF        = 4,
+  RESET_RSF       = 5,
+  SET_IP_ADDRESS  = 6,
 };
 
 enum class DataType : uint8_t {

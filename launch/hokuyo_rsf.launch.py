@@ -6,19 +6,19 @@ import os
 
 def generate_launch_description():
   config_dir = os.path.join(
-    get_package_share_directory('hokuyo_spel_master'),
+    get_package_share_directory('hokuyo_rsf'),
     'config'
   )
 
-  master_config_yaml = os.path.join(config_dir, 'hokuyo_spel_master_config.yaml')
+  config_yaml = os.path.join(config_dir, 'hokuyo_rsf.yaml')
 
   return LaunchDescription([
     Node(
-      package='hokuyo_spel_master',
-      executable='hokuyo_spel_master_node',
-      name='hokuyo_spel_master_node',
+      package='hokuyo_rsf',
+      executable='hokuyo_rsf',
+      name='hokuyo_rsf',
       parameters=[
-        master_config_yaml,
+        config_yaml,
         {'param_files_dir': config_dir}
       ],
       output='screen'
