@@ -1,4 +1,4 @@
-hokuyo_spel_ros_node:
+hokuyo_rsf:
   ros__parameters:
     # IP address and port
     spel_ip_address: "192.168.0.100"
