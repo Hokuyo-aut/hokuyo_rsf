@@ -27,7 +27,7 @@ namespace spnet {
 
 // ******************** Static parameters ********************
 
-constexpr uint16_t SP_HEAD = 0x5333;
+constexpr uint16_t SP_HEAD = 0x5350;
 
 
 
@@ -79,7 +79,7 @@ struct Header {
   uint32_t sec;        // net (measurement time; 0 if not applicable)
   uint32_t nsec;       // net (measurement time; 0 if not applicable)
   uint32_t seq;        // net (request/response correlation)
-  uint32_t len;        // net (payload bytes)
+  uint32_t len;        // net (sizeof(Header) + payload_size + 2)
 } __attribute__((packed));
 
 
