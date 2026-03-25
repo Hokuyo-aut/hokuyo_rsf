@@ -2,7 +2,7 @@
 
 ### ビルド
 ```
-cd colcon_ws
+cd colcon_ws/src
 git clone https://github.com/Hokuyo-aut/hokuyo_rsf.git
 cd colcon_ws
 colcon build --symlink-install
