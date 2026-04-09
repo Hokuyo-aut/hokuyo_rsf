@@ -8,7 +8,7 @@ cd colcon_ws
 
 # nmea_msgs/msg/gpzda が必要
 sudo apt remove ros-humble-nmea-msgs
-git pull https://github.com/hokuyo-rd-release/nmea_msgs.git
+git clone https://github.com/hokuyo-rd-release/nmea_msgs.git
 colcon build --packages-select nmea_msgs
 colcon build --symlink-install --packages-select hokuyo_rsf
 ```
