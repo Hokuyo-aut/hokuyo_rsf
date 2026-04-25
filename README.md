@@ -1,5 +1,7 @@
 # hokuyo_rsf
 
+Version: ROS2 humble
+
 ### ビルド
 ```
 cd colcon_ws/src
