@@ -14,9 +14,23 @@ git clone https://github.com/hokuyo-rd-release/nmea_msgs.git
 colcon build --packages-select nmea_msgs
 colcon build --symlink-install --packages-select hokuyo_rsf
 ```
+
+### Docker
+
+```
+cd hokuyo_rsf/docker
+docker build --network host -t hokuyo_rsf:release .
+./run.bash -n hokuyo_rsf_release -s /path/to/your/share_folder
+```
+
 ### 実行
+
 ```shell
+# Node only
 ros2 launch hokuyo_rsf hokuyo_rsf.launch.py
+
+# With Visualization
+ros2 launch hokuyo_rsf hokuyo_rsf_sample.launch.py
 ```
 ### 自律走行サンプル
 
