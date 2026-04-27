@@ -17,10 +17,15 @@ colcon build --symlink-install --packages-select hokuyo_rsf
 
 ### Docker
 
-```
+```shell
 cd hokuyo_rsf/docker
+# Build Image
 docker build --network host -t hokuyo_rsf:release .
+# Enter the Container
 ./run.bash -n hokuyo_rsf_release -s /path/to/your/share_folder
+# After you exit the container, the endpoint is generated automatically.
+# You can use this script when you want to enter the container again.
+~/CONTAINER_NAME.bash
 ```
 
 ### 実行
