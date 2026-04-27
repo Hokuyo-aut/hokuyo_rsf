@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-pcl-msgs \
     ros-humble-pcl-conversions \
     ros-humble-pcl-ros \
+    ros-humble-rviz2 \
     python3-colcon-common-extensions python3-rosdep \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +36,7 @@ FROM ubuntu:22.04
 
 ENV ROS_DISTRO=humble
 ENV DEBIAN_FRONTEND=noninteractive
+ENV QT_X11_NO_MITSHM=1
 
 # 実行環境でもROSリポジトリを登録し、必要なランタイムパッケージのみをインストール
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -46,6 +48,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-pcl-msgs \
     ros-humble-pcl-conversions \
     ros-humble-pcl-ros \
+    ros-humble-rviz2 \
+    libgl1-mesa-dri \
+    libgl1-mesa-glx \
     && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ビルド成果物をコピー
