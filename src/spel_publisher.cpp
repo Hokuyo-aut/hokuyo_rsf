@@ -369,7 +369,7 @@ void HokuyoSpelPublisher::publishDiagnostics(
   AddKV(status, "device_status", std::to_string(static_cast<int>(pkt.device_status)));
 
   AddKV(status, "device_temperature",
-        std::to_string(ntohl(pkt.device_temperature)));  // mdegC
+        std::to_string(ntohl(pkt.device_temperature)));  // degC
 
   AddKV(status, "cpu_usage",
         std::to_string(static_cast<int>(pkt.cpu_usage)));

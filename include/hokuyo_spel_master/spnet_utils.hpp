@@ -197,7 +197,7 @@ struct DiagnosticPacket {
   uint8_t  fw_patch;
   char     device_id[8];        // fixed 8 bytes (no guarantee of '\0')
   uint8_t  device_status;
-  uint32_t device_temperature;  // e.g., milli-degree C
+  uint32_t device_temperature;  // degree C
   uint8_t  cpu_usage;           // 0-100
   uint64_t elapsed_time;        // seconds (recommend network order? see note)
   uint8_t  odometry_state;

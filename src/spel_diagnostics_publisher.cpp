@@ -54,7 +54,7 @@ class SpelDiagnosticsPublisher : public rclcpp::Node {
     add(status, "firmware_version", "1.0.0");
     add(status, "device_id", "H0000001");
     add(status, "device_status", "0");
-    add(status, "device_temperature", "35000");
+    add(status, "device_temperature", "35");
     add(status, "cpu_usage", "35");
     add(status, "elapsed_time", "10000");
     add(status, "odometry_state", "0");

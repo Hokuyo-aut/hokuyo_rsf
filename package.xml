@@ -11,8 +11,10 @@
 
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
+  <depend>rcl</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>jsk_rviz_plugins</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>nmea_msgs</depend>
