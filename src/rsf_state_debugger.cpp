@@ -52,13 +52,14 @@ public:
     this->get_parameter("cpu_limit", cpu_limit_);
     this->get_parameter("temp_limit", temp_limit_);
 
-    // 負荷軽減のため、統合表示（summary_table）とアラート表示、システム間通信用トピックに絞る
+    // パブリッシャーの設定
     summary_table_pub_ = this->create_publisher<jsk_rviz_plugin_msgs::msg::OverlayText>("summary_table_text", 10);
     alert_text_pub_ = this->create_publisher<jsk_rviz_plugin_msgs::msg::OverlayText>("alert_text", 10);
     audio_warning_pub_ = this->create_publisher<std_msgs::msg::String>(pub_audio_warning_topic, 10);
     status_summary_pub_ = this->create_publisher<std_msgs::msg::String>(pub_status_summary_topic, 10);
     float_publisher_ = this->create_publisher<std_msgs::msg::Float32>("gnss_fix_float", 10);
     
+    // サブスクライバーの設定
     gnss_subscriber_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
       sub_gnss_topic, 10, std::bind(&OverlayTextNode::navSatStatusCallBack, this, _1));
     gnss_state_sub_ = this->create_subscription<std_msgs::msg::String>(
@@ -76,18 +77,18 @@ public:
     diagnostics_sub_ = this->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
       sub_diagnostics_topic, 10, std::bind(&OverlayTextNode::diagnosticsCallBack, this, _1));
 
-    // 0.5秒タイマー
+    // 0.5秒タイマーの起動
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(500), 
       std::bind(&OverlayTextNode::timer_callback, this));
 
-    // 統合テーブルの設定
+    // 統合テーブルの初期設定
     summary_table_text_.action = jsk_rviz_plugin_msgs::msg::OverlayText::ADD;
     summary_table_text_.left = 10; summary_table_text_.top = 300;
     summary_table_text_.width = 400; summary_table_text_.height = 250;
     summary_table_text_.bg_color = createColor(0.0, 0.0, 0.0, 0.7);
 
-    // アラートの設定
+    // アラートの初期設定
     alert_text_.action = jsk_rviz_plugin_msgs::msg::OverlayText::ADD;
     alert_text_.left = 500; alert_text_.top = 300;
     alert_text_.width = 800; alert_text_.height = 200;
@@ -149,7 +150,7 @@ private:
     double current_period = period_duration.seconds();
 
     if (lidar_odom_periods_.empty() && current_period < 0.001) {
-        // 無視
+        // 初期ノイズを無視
     } else {
         lidar_odom_periods_.push_back(current_period);
     }
@@ -159,7 +160,7 @@ private:
     }
   }
 
-  // 0.5秒ごとに集約されたデータのみをパブリッシュ
+  // 0.5秒ごとに集約データを処理し色分け表示をパブリッシュ
   void timer_callback()
   {
     double avg_period = 0.0;
@@ -183,70 +184,124 @@ private:
     summary_msg.data = ss_sum.str();
     status_summary_pub_->publish(summary_msg);
 
-    // 2. 統合テーブルの作成 (HTMLライク)
+    // ==========================================
+    // 2. 詳細な動的色分けロジック (HTML形式)
+    // ==========================================
+    
+    // ① GPGGA Qual (品質)
     std::string qual_color = "white";
-    if (gnss_qual_int_ == 4) qual_color = "#00FF00"; // RTK Fix
-    else if (gnss_qual_int_ == 5) qual_color = "yellow";
-    else if (gnss_qual_int_ == 1 || gnss_qual_int_ == 2) qual_color = "cyan";
-    else if (gnss_qual_int_ != -1) qual_color = "red";
+    if (gnss_qual_int_ == 4) qual_color = "#00FF00";      // RTK Fix (緑)
+    else if (gnss_qual_int_ == 5) qual_color = "yellow";   // RTK Float (黄)
+    else if (gnss_qual_int_ == 1 || gnss_qual_int_ == 2) qual_color = "cyan"; // GPS/DGPS (水色)
+    else if (gnss_qual_int_ != -1) qual_color = "red";     // Invalid等 (赤)
 
-    // LIOのタイプに応じて色変更（元の個別表示のロジックを統合テーブルに移植）
+    // ② Odom Type (オドメトリソース)
     std::string odom_type_color = "white";
-    if (odom_type_val_ == "LIO (switch)") odom_type_color = "#00FFFF";
-    else if (odom_type_val_ == "GNSS (switch)") odom_type_color = "#00FF00";
-    else if (odom_type_val_ == "LIO (raw)") odom_type_color = "#FFFF00";
+    if (odom_type_val_ == "LIO (switch)") odom_type_color = "#00FFFF"; // 水色
+    else if (odom_type_val_ == "GNSS (switch)") odom_type_color = "#00FF00"; // 緑
+    else if (odom_type_val_ == "LIO raw") odom_type_color = "#FFFF00"; // 黄
+    else if (odom_type_val_ == "LIO (gnss is abnormal)") odom_type_color = "#FF0000"; // 赤
+    else if (odom_type_val_ == "GNSS (lio is abnormal)") odom_type_color = "#FF0000"; // 赤
 
-    // LIOレートに応じた色変更
+    // 【修正】③ GNSS Type (Odom Typeと同じルールにマッピング)
+    std::string gnss_type_color = "white";
+    if (gnss_type_val_ == "LIO (switch)") gnss_type_color = "#00FFFF";      // 水色
+    else if (gnss_type_val_ == "GNSS (switch)") gnss_type_color = "#00FF00"; // 緑
+    else if (gnss_type_val_ == "GNSS raw") gnss_type_color = "#FFFF00";     // 黄
+    else if (gnss_type_val_ == "LIO (gnss is abnormal)") gnss_type_color = "#FF0000"; // 赤
+    else if (gnss_type_val_ == "GNSS (lio is abnormal)") gnss_type_color = "#FF0000"; // 赤
+    else if (gnss_type_val_ == "N/A") gnss_type_color = "gray";
+
+    // ④ LIO Rate (周波数)
     std::string rate_color = "white";
-    if (frequency_hz >= 9.5) rate_color = "#00FF00";
-    else if (frequency_hz >= 5.0) rate_color = "#FFFF00";
-    else if (frequency_hz > 0.0) rate_color = "#FF0000";
+    if (frequency_hz >= 9.5) rate_color = "#00FF00";      // 正常 (緑)
+    else if (frequency_hz >= 5.0) rate_color = "#FFFF00"; // 警告 (黄)
+    else if (frequency_hz > 0.0) rate_color = "#FF0000";  // 異常 (赤)
 
-    std::stringstream ss_table;
-    ss_table << "<span style='font-size: 14pt; color: white;'>RSF System Status</span><br>"
-             << "<hr>"
-             << "<table>"
-             << "<tr><td>Accuracy:</td><td>" << gnss_acc_val_ << "</td></tr>"
-             << "<tr><td>GPGGA Qual:</td><td><span style='color: " << qual_color << ";'>" << gnss_qual_val_ << "</span></td></tr>"
-             << "<tr><td>GNSS Type:</td><td>" << gnss_type_val_ << "</td></tr>"
-             << "<tr><td>GNSS State:</td><td>" << gnss_state_val_ << "</td></tr>"
-             << "<tr><td>Odom Type:</td><td><span style='color: " << odom_type_color << ";'>" << odom_type_val_ << "</span></td></tr>"
-             << "<tr><td>Odom State:</td><td>" << odom_state_val_ << "</td></tr>"
-             << "<tr><td>LIO Rate:</td><td><span style='color: " << rate_color << ";'>" << std::fixed << std::setprecision(1) << frequency_hz << " Hz</span></td></tr>"
-             << "<tr><td>CPU Usage:</td><td>" << cpu_usage_val_ << " %</td></tr>"
-             << "<tr><td>Device Temp:</td><td>" << temperature_val_ << "</td></tr>"
-             << "</table>";
-    summary_table_text_.text = ss_table.str();
-    summary_table_pub_->publish(summary_table_text_);
+    // ⑤ GNSS State
+    std::string gnss_state_color = "white";
+    if (gnss_state_val_ == "good" || gnss_state_val_ == "normal") gnss_state_color = "#00FF00"; // FIX系は緑
+    else if (gnss_state_val_ == "be careful") gnss_state_color = "#FFFF00"; // FLOAT系は黄
+    else if (gnss_state_val_ == "abnormal") gnss_state_color = "#FF0000"; // abnormalは赤
+    else if (gnss_state_val_ == "N/A") gnss_state_color = "gray";
 
-    // 3. アラート判定
+    // ⑥ Odom State
+    std::string odom_state_color = "white";
+    if (odom_state_val_ == "OK" || odom_state_val_ == "good" || odom_state_val_ == "normal") odom_state_color = "#00FF00";
+    else if (odom_state_val_ == "WARNING" || odom_state_val_ == "STALE" || odom_state_val_ == "be careful") odom_state_color = "#FFFF00";
+    else if (odom_state_val_ == "ERROR" || odom_state_val_ == "FAIL" || odom_state_val_ == "abnormal") odom_state_color = "#FF0000";
+    else if (odom_state_val_ == "N/A") odom_state_color = "gray";
+
+    // ⑦ Accuracy (位置誤差)
+    std::string acc_color = "white";
+    if (gnss_acc_val_ != "N/A" && gnss_acc_val_.size() > 1) {
+      try {
+        double acc_val = std::stod(gnss_acc_val_.substr(0, gnss_acc_val_.size() - 1)); 
+        if (acc_val <= 0.05) acc_color = "#00FF00";      
+        else if (acc_val <= 0.5) acc_color = "#00FFFF";  
+        else if (acc_val <= 1.5) acc_color = "#FFFF00";  
+        else acc_color = "#FF0000";                      
+      } catch (...) { acc_color = "white"; }
+    } else if (gnss_acc_val_ == "N/A") {
+      acc_color = "gray";
+    }
+
+    // ⑧ CPU Usage & アラート処理
+    std::string cpu_color = "#00FF00"; 
     std::string alerts = "";
+    bool is_cpu_overload = false;
+
     try {
       if (!cpu_usage_val_.empty() && cpu_usage_val_ != "N/A") {
-        bool current_cpu_alert = (std::stoi(cpu_usage_val_) > cpu_limit_);
-        if (current_cpu_alert && !prev_cpu_alert_) {
+        int cpu_int = std::stoi(cpu_usage_val_);
+        if (cpu_int > cpu_limit_) {
+          cpu_color = "#FF0000"; 
+          is_cpu_overload = true;
+        } else if (cpu_int > (cpu_limit_ - 20)) {
+          cpu_color = "#FFFF00"; 
+        }
+        
+        if (is_cpu_overload && !prev_cpu_alert_) {
           std_msgs::msg::String msg; msg.data = "cpu_overload"; audio_warning_pub_->publish(msg);
         }
-        else if (!current_cpu_alert && prev_cpu_alert_) {
+        else if (!is_cpu_overload && prev_cpu_alert_) {
           std_msgs::msg::String msg; msg.data = "cpu_normal"; audio_warning_pub_->publish(msg);
         }
-        prev_cpu_alert_ = current_cpu_alert;
-        if (current_cpu_alert) alerts += "!!! HIGH CPU LOAD !!!<br>";
+        prev_cpu_alert_ = is_cpu_overload;
+        if (is_cpu_overload) alerts += "!!! HIGH CPU LOAD !!!<br>";
+      } else {
+        cpu_color = "gray";
       }
+    } catch (...) { cpu_color = "white"; }
+
+    // ⑨ Device Temp & アラート処理
+    std::string temp_color = "#00FF00"; 
+    bool is_temp_overheat = false;
+
+    try {
       if (!temperature_val_.empty() && temperature_val_ != "N/A") {
         double t = std::stod(temperature_val_.substr(0, temperature_val_.find(" ")));
-        bool current_temp_alert = (t > temp_limit_);
-        if (current_temp_alert && !prev_temp_alert_) {
+        if (t > temp_limit_) {
+          temp_color = "#FF0000"; 
+          is_temp_overheat = true;
+        } else if (t > (temp_limit_ - 10.0)) {
+          temp_color = "#FFFF00"; 
+        }
+
+        if (is_temp_overheat && !prev_temp_alert_) {
           std_msgs::msg::String msg; msg.data = "temperature_error"; audio_warning_pub_->publish(msg);
         }
-        else if (!current_temp_alert && prev_temp_alert_) {
+        else if (!is_temp_overheat && prev_temp_alert_) {
           std_msgs::msg::String msg; msg.data = "temperature_normal"; audio_warning_pub_->publish(msg);
         }
-        prev_temp_alert_ = current_temp_alert;
-        if (current_temp_alert) alerts += "!!! DEVICE OVERHEAT !!!<br>";
+        prev_temp_alert_ = is_temp_overheat;
+        if (is_temp_overheat) alerts += "!!! DEVICE OVERHEAT !!!<br>";
+      } else {
+        temp_color = "gray";
       }
-    } catch (...) {}
+    } catch (...) { temp_color = "white"; }
 
+    // GNSS Lost/Recovered 判定
     bool current_gnss_fix = (gnss_state_val_.find("FIX") != std::string::npos);
     if (prev_gnss_fix_ && !current_gnss_fix && gnss_state_val_ != "N/A") {
         std_msgs::msg::String msg; msg.data = "gnss_lost"; audio_warning_pub_->publish(msg);
@@ -256,6 +311,27 @@ private:
     }
     prev_gnss_fix_ = current_gnss_fix;
 
+    // ==========================================
+    // 3. HTML構築とパブリッシュ
+    // ==========================================
+    std::stringstream ss_table;
+    ss_table << "<span style='font-size: 14pt; color: white;'>RSF System Status</span><br>"
+             << "<hr>"
+             << "<table>"
+             << "<tr><td>Accuracy:</td><td><span style='color: " << acc_color << ";'>" << gnss_acc_val_ << "</span></td></tr>"
+             << "<tr><td>GPGGA Qual:</td><td><span style='color: " << qual_color << ";'>" << gnss_qual_val_ << "</span></td></tr>"
+             << "<tr><td>GNSS Type:</td><td><span style='color: " << gnss_type_color << ";'>" << gnss_type_val_ << "</span></td></tr>"
+             << "<tr><td>GNSS State:</td><td><span style='color: " << gnss_state_color << ";'>" << gnss_state_val_ << "</span></td></tr>"
+             << "<tr><td>Odom Type:</td><td><span style='color: " << odom_type_color << ";'>" << odom_type_val_ << "</span></td></tr>"
+             << "<tr><td>Odom State:</td><td><span style='color: " << odom_state_color << ";'>" << odom_state_val_ << "</span></td></tr>"
+             << "<tr><td>LIO Rate:</td><td><span style='color: " << rate_color << ";'>" << std::fixed << std::setprecision(1) << frequency_hz << " Hz</span></td></tr>"
+             << "<tr><td>CPU Usage:</td><td><span style='color: " << cpu_color << ";'>" << cpu_usage_val_ << " %</span></td></tr>"
+             << "<tr><td>Device Temp:</td><td><span style='color: " << temp_color << ";'>" << temperature_val_ << "</span></td></tr>"
+             << "</table>";
+    summary_table_text_.text = ss_table.str();
+    summary_table_pub_->publish(summary_table_text_);
+
+    // アラート画面の描画
     if (!alerts.empty()) {
       alert_text_.text = "<span style='font-size: 30pt;'>" + alerts + "</span>";
     } else {
@@ -264,7 +340,7 @@ private:
     alert_text_pub_->publish(alert_text_);
   }
 
-  // 各コールバック内ではメンバ変数の更新のみに留め、OverlayTextのパブリッシュを削除
+  // 各受信コールバックでは変数更新のみ実施
   void navSatStatusCallBack(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
   {
     double gnss_status = std::sqrt(msg->position_covariance[0]);
@@ -272,7 +348,7 @@ private:
 
     std_msgs::msg::Float32 float_data;
     float_data.data = static_cast<float>(gnss_status);
-    float_publisher_->publish(float_data); // 数値トピックは軽量なため維持
+    float_publisher_->publish(float_data); 
   }
 
   void gnssStateCallBack(const std_msgs::msg::String::SharedPtr msg)

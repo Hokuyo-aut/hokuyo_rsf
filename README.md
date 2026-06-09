@@ -15,6 +15,7 @@ git clone -b feat/ros2 https://github.com/hokuyo-rd-release/jsk_visualization.gi
 ### ビルド
 ```bash
 cd ~/colcon_ws
+colcon build
 colcon build --symlink-install --packages-select hokuyo_rsf
 source install/setup.bash
 ```
@@ -28,7 +29,7 @@ ros2 launch hokuyo_rsf hokuyo_rsf_sample.launch.py
 
 ### RViz のみを確認する（ドライバを起動しない）：
 ```bash
-ros2 launch hokuyo_rsf hokuyo_rsf_sample.launch.py use_sensors:=false
+ros2 launch hokuyo_rsf hokuyo_rsf_sample.launch.py debug_mode:=true
 ```
 
 
@@ -41,15 +42,14 @@ ros2 launch hokuyo_rsf hokuyo_rsf_sample.launch.py use_sensors:=false
 | 項目名 | 説明 | 参照トピック | 詳細説明 |
 | :--- | :--- | :--- | :--- |
 | **Accuracy** | 推定される GNSS 位置精度（m）。 | `/spel/nav_sat_fix` | **緑**: ≤0.1m, **黄**: ≤4.0m, **赤**: >4.0m |
-| **GPGGA Qual** | NMEA の GPS 品質インジケータ。 | `/spel/gpgga` | **緑**: RTK Fix (4), **黄**: RTK Float (5), **シアン**: GPS/DGPS, **赤**: その他 |
-| **GPGGA Detail** | 測位品質の詳細説明。 | `/spel/gpgga` | **背景緑**: RTK Fix, **背景黄**: RTK Float, **背景赤**: Invalid |
-| **GNSS Type** | 測位データのソース。 | `/spel/switch_fix_type` | Internal / External など |
-| **GNSS State** | 測位計算の収束状態。 | `/spel/switch_fix_state` | **緑**: FIX, **黄**: FLOAT, **赤**: その他 |
-| **Odometry Type** | 現在の主オドメトリソース。 | `/spel/switch_odom_type` | LIO (switch), GNSS (switch), LIO (raw) など |
-| **Odometry State** | システムの安定状態。 | `/spel/switch_odom_state` | **緑**: steady, **黄**: その他 |
+| **GPGGA Qual** | NMEA の GPS 品質インジケータ。 | `/spel/gpgga` | **緑**: RTK Fix(4), **黄**: RTK Float(5), **シアン**: GPS/DGPS(1,2), **赤**: Invalid(0) |
+| **GNSS Type** | 測位データのソース。 | `/spel/switch_fix_type` | **緑**: GNSS (switch), **水色**: LIO (switch), **黄**: GNSS raw, **赤**: abnormal |
+| **GNSS State** | 測位計算の収束状態。 | `/spel/switch_fix_state` | **緑**: good/normal, **黄**: be careful, **赤**: abnormal |
+| **Odometry Type** | 現在の主オドメトリソース。 | `/spel/switch_odom_type` | **緑**: GNSS (switch), **水色**: LIO (switch), **黄**: LIO raw, **赤**: abnormal |
+| **Odometry State** | システムの動作・安定状態。 | `/spel/switch_odom_state` | **緑**: OK/good/normal, **黄**: WARNING/STALE/be careful, **赤**: ERROR/FAIL/abnormal |
 | **LIO Rate** | 直近1000サンプルの平均周波数。 | `/spel/lidar_rate_odom` | **緑**: ≥9.5Hz, **黄**: ≥5.0Hz, **赤**: <5.0Hz |
-| **CPU Usage** | システム全体の CPU 使用率。 | `/spel/diagnostics` | **緑**: <70%, **黄**: <90%, **赤**: 閾値超過 |
-| **Device Temp** | 内部センサーの測定温度。 | `/spel/diagnostics` | **緑**: <55℃, **黄**: <75℃, **赤**: 閾値超過 |
+| **CPU Usage** | システム全体の CPU 使用率。 | `/spel/diagnostics` | **緑**: <(limit-20)%, **黄**: <limit%, **赤**: 閾値(default 90%)超過 |
+| **Device Temp** | 内部センサーの測定温度。 | `/spel/diagnostics` | **緑**: <(limit-10)℃, **黄**: <limit℃, **赤**: 閾値(default 75℃)超過 |
 
 ### アラート通知
 
