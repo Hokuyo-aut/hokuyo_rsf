@@ -14,26 +14,31 @@ def generate_launch_description():
     )
     
     config_yaml = os.path.join(config_dir, 'hokuyo_rsf.yaml')
-    debugger_yaml = os.path.join(config_dir, 'rsf_state_publisher.yaml')
+    
+    debugger_config_dir = os.path.join(
+        get_package_share_directory('rsf_debugger'),
+        'config'
+    )
+    debugger_yaml = os.path.join(debugger_config_dir, 'rsf_state_publisher.yaml')
     rviz_conf = os.path.join(config_dir, 'rviz.rviz')
 
     show_debugger = LaunchConfiguration('show_debugger')
-    debug_mode = LaunchConfiguration('debug_mode')  # フラグ名を debug_mode に変更
+    debugger_only = LaunchConfiguration('debugger_only')  # フラグ名を debugger_only に変更
 
     return LaunchDescription([
         DeclareLaunchArgument(
             'show_debugger',
-            default_value='true',
+            default_value='false',
             description='Whether to display the rsf state debugger'
         ),
-        # フラグ名を debug_mode に変更 (default: false)
+        # フラグ名を debugger_only に変更 (default: false)
         DeclareLaunchArgument(
-            'debug_mode',
+            'debugger_only',
             default_value='false',
             description='If true, sensor node (hokuyo_rsf) will not be launched for debugging with bag files, etc.'
         ),
 
-        # メインのセンサノード (debug_modeが「true」のときは UnlessCondition により起動しない)
+        # メインのセンサノード (debugger_onlyが「true」のときは UnlessCondition により起動しない)
         Node(
             package='hokuyo_rsf',
             executable='hokuyo_rsf',
@@ -43,12 +48,12 @@ def generate_launch_description():
                 {'param_files_dir': config_dir}
             ],
             output='screen',
-            condition=UnlessCondition(debug_mode)
+            condition=UnlessCondition(debugger_only)
         ),
 
         # デバッグ用UIノード
         Node(
-            package='hokuyo_rsf',
+            package='rsf_debugger',
             executable='rsf_state_debugger',
             name='sensor_status_display_node',
             parameters=[debugger_yaml],
@@ -58,7 +63,7 @@ def generate_launch_description():
 
         # 音声警告プレイヤー
         Node(
-            package='hokuyo_rsf',
+            package='rsf_debugger',
             executable='audio_warning_player.py',
             name='audio_warning_player',
             output='screen',

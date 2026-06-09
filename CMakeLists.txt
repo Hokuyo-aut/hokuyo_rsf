@@ -9,7 +9,6 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
-find_package(jsk_rviz_plugins REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -30,8 +29,6 @@ add_executable(hokuyo_rsf
   src/payload_converter.cpp
   src/spel_parser.cpp
   src/spel_publisher.cpp)
-
-add_executable(rsf_state_debugger src/rsf_state_debugger.cpp)
 
 target_include_directories(hokuyo_rsf PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -55,21 +52,7 @@ ament_target_dependencies(hokuyo_rsf
   "rosidl_typesupport_cpp"
 )
 
-target_compile_features(rsf_state_debugger PUBLIC c_std_99 cxx_std_17)
-target_include_directories(rsf_state_debugger PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-
-ament_target_dependencies(rsf_state_debugger
-  "rclcpp"
-  "jsk_rviz_plugins"
-  "std_msgs"
-  "sensor_msgs"
-  "geometry_msgs"
-  "nav_msgs"
-  "nmea_msgs"
-  "diagnostic_msgs"
-)
+install(TARGETS hokuyo_rsf DESTINATION lib/${PROJECT_NAME})
 
 # send_uint8_command
 add_executable(send_uint8_command
@@ -85,6 +68,9 @@ ament_target_dependencies(send_uint8_command
   "rclcpp"
   "std_msgs")
 
+install(TARGETS send_uint8_command
+  DESTINATION lib/${PROJECT_NAME})
+
 # spel_diagnostics_publisher
 add_executable(spel_diagnostics_publisher
   src/spel_diagnostics_publisher.cpp)
@@ -98,19 +84,9 @@ target_compile_features(spel_diagnostics_publisher PUBLIC c_std_99 cxx_std_17)
 ament_target_dependencies(spel_diagnostics_publisher
   "rclcpp"
   "std_msgs"
-  "diagnostic_msgs"
-  "jsk_rviz_plugins"
-)
+  "diagnostic_msgs")
+install(TARGETS spel_diagnostics_publisher
 
-install(TARGETS 
-  hokuyo_rsf
-  send_uint8_command
-  spel_diagnostics_publisher
-  rsf_state_debugger
-  DESTINATION lib/${PROJECT_NAME})
-
-install(PROGRAMS 
-  scripts/audio_warning_player.py
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
@@ -123,17 +99,6 @@ endif()
 install(
   DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}/
-)
-
-ament_export_dependencies(
-  rclcpp
-  jsk_rviz_plugins
-  std_msgs
-  sensor_msgs
-  geometry_msgs
-  nav_msgs
-  nmea_msgs
-  diagnostic_msgs
 )
 
 ament_package()
