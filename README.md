@@ -51,6 +51,7 @@ RViz 上にRSFの状態出力をリアルタイムで表示させることがで
 # jsk_visualization のクローン
 cd ~/colcon_ws/src
 git clone https://github.com/hokuyo-rd-release/jsk_visualization.git
+cd ~/colcon_ws
 colcon build
 source install/setup.bash
 ```
