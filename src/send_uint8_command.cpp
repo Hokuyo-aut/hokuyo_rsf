@@ -41,7 +41,7 @@ int main(int argc, char** argv)
   auto node = std::make_shared<rclcpp::Node>("send_uint8");
 
   // Topic parameter (合わせやすいように param 化)
-  node->declare_parameter<std::string>("topic", "/spel/cmd_to_spel");
+  node->declare_parameter<std::string>("topic", "/rsf/cmd_to_spel");
   std::string topic;
   node->get_parameter("topic", topic);
 
