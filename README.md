@@ -37,6 +37,21 @@ ros2 launch hokuyo_rsf hokuyo_rsf.launch.py
 # With Visualization
 ros2 launch hokuyo_rsf hokuyo_rsf_sample.launch.py
 ```
+
+### コマンド送信
+
+hokuyo_rsfノードを起動してから実行します。
+
+```shell
+ros2 run hokuyo_rsf send_uint8_command 1
+```
+- 1: データストリーミング開始
+- 2: データストリーミング終了
+- 3: 位置推定開始
+- 4: 位置推定終了
+- 5: 位置推定のリセット (4と3を続けて送ることと同等)
+
+
 ### 自律走行サンプル
 
 解説：https://sourceforge.net/p/urgnetwork/wiki/rsf_app_info_jp/
