@@ -29,6 +29,10 @@
 
 #include <unistd.h>
 #include <signal.h>
+#include <cerrno>
+#include <cmath>
+#include <array>
+#include <string>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 
@@ -178,6 +182,19 @@ class HokuyoSpelRosNode : public rclcpp::Node {
       tfBroadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
     }
 
+    // 受信状況のログ出力
+    this->declare_parameter<double>("diag_period", 1.0);
+    this->declare_parameter<double>("stall_timeout", 1.0);
+    this->get_parameter("diag_period", diagPeriod_);
+    this->get_parameter("stall_timeout", stallTimeout_);
+    startTime_ = SteadyClock::now();
+    lastAnyRx_ = startTime_;
+    windowStart_ = startTime_;
+    diagTimer_ = this->create_wall_timer(
+      std::chrono::duration<double>(diagPeriod_), std::bind(&HokuyoSpelRosNode::diagCallback, this));
+    RCLCPP_INFO(this->get_logger(), "起動: RSF %s:%d (diag_period=%.2fs, stall_timeout=%.2fs)",
+      spelIpAdress_.c_str(), spelPort_, diagPeriod_, stallTimeout_);
+
     // Initialization for socket communication
     setupSocket();
     clientRunning_.store(true);
@@ -238,9 +255,26 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(spelPort_);
     ::inet_pton(AF_INET, spelIpAdress_.c_str(), &addr.sin_addr);
+    const auto connectStart = SteadyClock::now();
     if (connect(sock_, (sockaddr*)&addr, sizeof(addr)) < 0) {
+      const int err = errno;
       perror("connect");
+      RCLCPP_FATAL(this->get_logger(),
+        "RSF への接続に失敗: %s:%d errno=%d (%s), 接続処理 %.2fs, %s. プロセスを終了する",
+        spelIpAdress_.c_str(), spelPort_, err, std::strerror(err),
+        elapsed(connectStart, SteadyClock::now()), sinceDisconnectText().c_str());
+      rclcpp::shutdown();  // ログをファイルに書き出してから終了する
       exit(1);
+    }
+    const std::string sinceDisconnect = sinceDisconnectText();
+    {
+      std::lock_guard<std::mutex> lock(statsMutex_);
+      ++connectCount_;
+      connectedAt_ = SteadyClock::now();
+      connPackets_ = 0;
+      RCLCPP_INFO(this->get_logger(), "RSF に接続: %s:%d (接続 #%lu, 接続処理 %.2fs, %s)",
+        spelIpAdress_.c_str(), spelPort_, static_cast<unsigned long>(connectCount_),
+        elapsed(connectStart, connectedAt_), sinceDisconnect.c_str());
     }
 
     const int yes = 1;
@@ -256,13 +290,24 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     int sock,
     std::atomic<bool>& run)
   {
+    std::string disconnectReason = "停止要求";
     while (run.load() && rclcpp::ok()) {
       spnet::Header h{};
       std::vector<uint8_t> pl;
+      errno = 0;
       if (!spnet::recvFrame(sock, h, pl)) {
+        const int err = errno;
         RCLCPP_ERROR(this->get_logger(), "Failed to receive data from SPEL.");
+        // errno=0 は相手側からの切断、またはフレーム不正 (詳細は標準エラー出力)
+        if (!rclcpp::ok()) {
+          disconnectReason = "停止要求 (シャットダウン)";
+        } else {
+          disconnectReason = "受信失敗 errno=" + std::to_string(err) + " (" +
+            (err == 0 ? std::string("相手側の切断またはフレーム不正") : std::string(std::strerror(err))) + ")";
+        }
         break;
       }
+      recordFrame(sizeof(spnet::Header) + pl.size() + 2);
 
       const spnet::MsgType type = spnet::toMsgType(h.type);
 
@@ -270,6 +315,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
         std::string str;
         hspParser_.parseStringPayload(pl, str);
         RCLCPP_ERROR(this->get_logger(), "Got error from SPEL. %s", str.c_str());
+        disconnectReason = "SPEL からエラー: " + str;
         break;
       
       } else if (type == spnet::MsgType::WARN) {
@@ -285,6 +331,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
         const uint32_t sec = ntohl(h.sec);
         const uint32_t nsec = ntohl(h.nsec);
         const uint64_t stamp = static_cast<uint64_t>(sec) * 1000000000ULL + static_cast<uint64_t>(nsec);;
+        recordData(h.subtype, stamp * 1e-9);
 
         if (datatype == spnet::DataType::NAV_SAT_FIX) {
           spnet::NavSatFixPacket pkt;
@@ -361,6 +408,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishNavSatFix(navSatFixSwitchPub_, stamp, gnssFrame_, pkt);
+          checkFixSwitch(pkt, stamp * 1e-9);
 
         } else if (datatype == spnet::DataType::UTM_ODOM) {
           spnet::OdomPacket pkt;
@@ -385,6 +433,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishString(switchOdomStatePub_, str);
+          checkStateString(static_cast<size_t>(spnet::DataType::SWITCH_ODOM_STATE), str, stamp * 1e-9);
 
         } else if (datatype == spnet::DataType::SWITCH_ODOM_TYPE) {
           std::string str;
@@ -393,6 +442,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishString(switchOdomTypePub_, str);
+          checkStateString(static_cast<size_t>(spnet::DataType::SWITCH_ODOM_TYPE), str, stamp * 1e-9);
 
         } else if (datatype == spnet::DataType::SWITCH_FIX_STATE) {
           std::string str;
@@ -401,6 +451,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishString(switchFixStatePub_, str);
+          checkStateString(static_cast<size_t>(spnet::DataType::SWITCH_FIX_STATE), str, stamp * 1e-9);
 
         } else if (datatype == spnet::DataType::SWITCH_FIX_TYPE) {
           std::string str;
@@ -409,6 +460,7 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishString(switchFixTypePub_, str);
+          checkStateString(static_cast<size_t>(spnet::DataType::SWITCH_FIX_TYPE), str, stamp * 1e-9);
 
         } else if (datatype == spnet::DataType::DIAGNOSTIC_ARRAY) {
           spnet::DiagnosticPacket pkt;
@@ -417,12 +469,27 @@ class HokuyoSpelRosNode : public rclcpp::Node {
             continue;
           }
           hspPublisher_.publishDiagnostics(diagnosticsPub_, stamp, pkt);
+          checkDiagnostics(pkt);
 
+        } else {
+          RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "未知の DataType を受信: %u", static_cast<unsigned>(h.subtype));
         }
+      } else {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+          "未知の MsgType を受信: %u", static_cast<unsigned>(h.type));
       }
 
     }
 
+    {
+      std::lock_guard<std::mutex> lock(statsMutex_);
+      lastDisconnect_ = SteadyClock::now();
+      hasDisconnected_ = true;
+      RCLCPP_WARN(this->get_logger(), "RSF との受信を終了: 理由=%s, 接続 #%lu の接続時間 %.1fs, 受信フレーム %lu",
+        disconnectReason.c_str(), static_cast<unsigned long>(connectCount_),
+        elapsed(connectedAt_, lastDisconnect_), static_cast<unsigned long>(connPackets_));
+    }
     run.store(false);
   }
 
@@ -547,6 +614,252 @@ class HokuyoSpelRosNode : public rclcpp::Node {
     run.store(false);
   }
 
+  // ******************** 受信状況のログ出力 ********************
+  // RSF から何がいつ届いたかを記録し、途絶・状態変化を即時に、受信状況を diag_period ごとに出す.
+
+  using SteadyClock = std::chrono::steady_clock;  // PC の時刻補正の影響を受けないように steady を使う
+
+  struct RxStats {
+    uint64_t total = 0;
+    uint64_t window = 0;
+    uint64_t backward = 0;
+    SteadyClock::time_point lastRx{};
+    double lastStamp = 0.0;
+    double emaInterval = 0.0;  // 受信間隔の移動平均 [s]
+    bool stalled = false;
+  };
+
+  struct DiagState {
+    bool valid = false;
+    uint8_t deviceStatus = 0;
+    uint8_t odometryState = 0;
+    uint8_t odometryType = 0;
+    uint8_t gnssState = 0;
+    uint8_t gnssType = 0;
+    double temperature = 0.0;  // [℃]
+    int cpuUsage = 0;
+  };
+
+  static constexpr size_t kNumDataTypes = 16;
+
+  static const char* dataTypeName(size_t i) {
+    static const char* names[kNumDataTypes] = {
+      "?", "fix", "gga", "rmc", "zda", "cloud", "imu", "imu_odom",
+      "fix_sw", "utm_odom", "sw_odom", "sw_odom_state", "sw_odom_type",
+      "sw_fix_state", "sw_fix_type", "diag"};
+    return i < kNumDataTypes ? names[i] : "?";
+  }
+
+  static double elapsed(SteadyClock::time_point from, SteadyClock::time_point to) {
+    return std::chrono::duration<double>(to - from).count();
+  }
+
+  std::string sinceDisconnectText() {
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    if (!hasDisconnected_) {
+      return "初回の接続";
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "前回の切断から %.1fs", elapsed(lastDisconnect_, SteadyClock::now()));
+    return buf;
+  }
+
+  // フレームを 1 つ受信するたびに呼ぶ (種別を問わない).
+  void recordFrame(size_t bytes) {
+    const auto now = SteadyClock::now();
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    if (allStalled_) {
+      RCLCPP_WARN(this->get_logger(), "RSF からの受信が再開: %.2fs 何も受信していなかった",
+        elapsed(lastAnyRx_, now));
+      allStalled_ = false;
+    }
+    lastAnyRx_ = now;
+    windowBytes_ += bytes;
+    ++connPackets_;
+  }
+
+  // DATA フレームを受信するたびに呼ぶ.
+  void recordData(uint8_t subtype, double stamp) {
+    const auto now = SteadyClock::now();
+    const double latency = this->now().seconds() - stamp;
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    if (subtype == 0 || subtype >= kNumDataTypes) {
+      return;
+    }
+    auto& s = rxStats_[subtype];
+    const char* name = dataTypeName(subtype);
+    if (s.total == 0) {
+      RCLCPP_INFO(this->get_logger(), "[%s] 初回受信: stamp=%.3f now-stamp=%+.3fs", name, stamp, latency);
+    } else {
+      const double gap = elapsed(s.lastRx, now);
+      if (s.stalled) {
+        RCLCPP_WARN(this->get_logger(), "[%s] 受信再開: %.2fs 途絶していた (stamp %.3f -> %.3f, now-stamp=%+.3fs)",
+          name, gap, s.lastStamp, stamp, latency);
+        s.stalled = false;
+      } else {
+        s.emaInterval = (s.total == 1) ? gap : 0.95 * s.emaInterval + 0.05 * gap;
+      }
+      if (stamp < s.lastStamp) {
+        ++s.backward;
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+          "[%s] スタンプが巻き戻った: %.3f -> %.3f (%+.3fs)", name, s.lastStamp, stamp, stamp - s.lastStamp);
+      }
+    }
+    s.lastRx = now;
+    s.lastStamp = stamp;
+    ++s.total;
+    ++s.window;
+    lastLatency_ = latency;
+  }
+
+  void checkFixSwitch(const spnet::NavSatFixPacket& pkt, double stamp) {
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    // NavSatStatus: -1=NO_FIX, 0=FIX, 1=SBAS_FIX, 2=GBAS_FIX
+    if (pkt.status_status != lastFixStatus_) {
+      if (pkt.status_status < 0) {
+        RCLCPP_WARN(this->get_logger(), "[fix_sw] status 変化: %d -> %d (stamp=%.3f)",
+          lastFixStatus_, pkt.status_status, stamp);
+      } else {
+        RCLCPP_INFO(this->get_logger(), "[fix_sw] status 変化: %d -> %d (stamp=%.3f)",
+          lastFixStatus_, pkt.status_status, stamp);
+      }
+      lastFixStatus_ = pkt.status_status;
+    }
+    if (!std::isfinite(pkt.latitude) || !std::isfinite(pkt.longitude) || !std::isfinite(pkt.altitude)) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+        "[fix_sw] NaN/Inf を受信: lat=%f lon=%f alt=%f (stamp=%.3f)",
+        pkt.latitude, pkt.longitude, pkt.altitude, stamp);
+    }
+  }
+
+  void checkStateString(size_t subtype, const std::string& str, double stamp) {
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    auto& last = lastStrings_[subtype];
+    if (str != last) {
+      RCLCPP_INFO(this->get_logger(), "[%s] 変化: '%s' -> '%s' (stamp=%.3f)",
+        dataTypeName(subtype), last.c_str(), str.c_str(), stamp);
+      last = str;
+    }
+  }
+
+  void checkDiagnostics(const spnet::DiagnosticPacket& pkt) {
+    DiagState d;
+    d.valid = true;
+    d.deviceStatus = pkt.device_status;
+    d.odometryState = pkt.odometry_state;
+    d.odometryType = pkt.odometry_type;
+    d.gnssState = pkt.gnss_state;
+    d.gnssType = pkt.gnss_type;
+    d.temperature = static_cast<int32_t>(ntohl(pkt.device_temperature));  // 実機の値は ℃ 単位 (64 など)
+    d.cpuUsage = pkt.cpu_usage;
+
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    const auto logChange = [this](const char* key, int before, int after, bool valid) {
+      if (valid && before == after) {
+        return;
+      }
+      const std::string beforeText = valid ? std::to_string(before) : std::string("未受信");
+      RCLCPP_INFO(this->get_logger(), "[diag] %s 変化: %s -> %d", key, beforeText.c_str(), after);
+    };
+    if (d.valid && (!diag_.valid || d.deviceStatus != diag_.deviceStatus) && d.deviceStatus != 0) {
+      RCLCPP_WARN(this->get_logger(), "[diag] device_status が異常: %d", d.deviceStatus);
+    }
+    logChange("device_status", diag_.deviceStatus, d.deviceStatus, diag_.valid);
+    logChange("odometry_state", diag_.odometryState, d.odometryState, diag_.valid);
+    logChange("odometry_type", diag_.odometryType, d.odometryType, diag_.valid);
+    logChange("gnss_state", diag_.gnssState, d.gnssState, diag_.valid);
+    logChange("gnss_type", diag_.gnssType, d.gnssType, diag_.valid);
+    diag_ = d;
+  }
+
+  // diag_period ごとに呼ぶ. 途絶を検知し、受信状況を 1 行にまとめて出す.
+  // 受信スレッドが recv で止まっていても動くので、全データの途絶も検知できる.
+  void diagCallback() {
+    const auto now = SteadyClock::now();
+    std::vector<std::string> warnings;
+    std::string summary;
+    {
+      std::lock_guard<std::mutex> lock(statsMutex_);
+      const double period = std::max(elapsed(windowStart_, now), 1e-3);
+      const double anyAge = elapsed(lastAnyRx_, now);
+      const auto ageOf = [&](spnet::DataType t) {
+        const auto& s = rxStats_[static_cast<size_t>(t)];
+        return s.total == 0 ? -1.0 : elapsed(s.lastRx, now);
+      };
+      char buf[512];
+
+      if (!allStalled_ && anyAge > stallTimeout_) {
+        allStalled_ = true;
+        std::snprintf(buf, sizeof(buf),
+          "RSF から何も受信していない: %.2fs (接続 #%lu, 受信待ちで停止している可能性)",
+          anyAge, static_cast<unsigned long>(connectCount_));
+        warnings.emplace_back(buf);
+      }
+
+      for (size_t i = 1; i < kNumDataTypes; ++i) {
+        auto& s = rxStats_[i];
+        if (s.total < 3 || s.stalled) {
+          continue;
+        }
+        const double age = elapsed(s.lastRx, now);
+        const double threshold = std::max(stallTimeout_, 5.0 * s.emaInterval);
+        if (age > threshold) {
+          s.stalled = true;
+          std::snprintf(buf, sizeof(buf),
+            "[%s] 受信が途絶: 最終受信から %.2fs (通常の間隔 %.3fs), 最終stamp=%.3f | "
+            "他: cloud age=%.2fs, 全体の最終受信 %.2fs前",
+            dataTypeName(i), age, s.emaInterval, s.lastStamp,
+            ageOf(spnet::DataType::HOKUYO_CLOUD2), anyAge);
+          warnings.emplace_back(buf);
+        }
+      }
+
+      std::string counts;
+      for (size_t i = 1; i < kNumDataTypes; ++i) {
+        const auto& s = rxStats_[i];
+        if (s.total == 0) {
+          continue;
+        }
+        counts += " " + std::string(dataTypeName(i)) + "=" + std::to_string(s.window);
+        if (s.backward > 0) {
+          counts += "(backward " + std::to_string(s.backward) + ")";
+        }
+        if (s.stalled) {
+          counts += "(途絶中)";
+        }
+      }
+      std::snprintf(buf, sizeof(buf),
+        "接続 #%lu up=%.0fs rx=%.0fKB/s any_age=%.2fs | age fix_sw=%.2f cloud=%.2f utm=%.2f sw_odom=%.2f | "
+        "now-stamp=%+.3fs | fix_status=%d",
+        static_cast<unsigned long>(connectCount_), elapsed(connectedAt_, now),
+        windowBytes_ / 1024.0 / period, anyAge,
+        ageOf(spnet::DataType::NAV_SAT_FIX_SWITCH), ageOf(spnet::DataType::HOKUYO_CLOUD2),
+        ageOf(spnet::DataType::UTM_ODOM), ageOf(spnet::DataType::SWITCH_ODOM),
+        lastLatency_, lastFixStatus_);
+      summary = buf;
+      summary += " | count" + (counts.empty() ? std::string(" なし") : counts);
+      summary += " | sw_odom_type='" + lastStrings_[static_cast<size_t>(spnet::DataType::SWITCH_ODOM_TYPE)] +
+        "' sw_fix_state='" + lastStrings_[static_cast<size_t>(spnet::DataType::SWITCH_FIX_STATE)] + "'";
+      if (diag_.valid) {
+        std::snprintf(buf, sizeof(buf), " | diag dev=%d odom=%d/%d gnss=%d/%d temp=%.0fC cpu=%d%%",
+          diag_.deviceStatus, diag_.odometryState, diag_.odometryType, diag_.gnssState, diag_.gnssType,
+          diag_.temperature, diag_.cpuUsage);
+        summary += buf;
+      }
+
+      for (auto& s : rxStats_) {
+        s.window = 0;
+        s.backward = 0;
+      }
+      windowBytes_ = 0;
+      windowStart_ = now;
+    }
+    for (const auto& w : warnings) {
+      RCLCPP_WARN(this->get_logger(), "%s", w.c_str());
+    }
+    RCLCPP_INFO(this->get_logger(), "%s", summary.c_str());
+  }
+
   void spelClientClose(
     int sock)
   {
@@ -616,6 +929,27 @@ class HokuyoSpelRosNode : public rclcpp::Node {
   std::string gnssFrame_;
   std::string utmFrame_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster_;
+
+  // 受信状況のログ出力
+  double diagPeriod_{1.0};
+  double stallTimeout_{1.0};
+  rclcpp::TimerBase::SharedPtr diagTimer_;
+  std::mutex statsMutex_;
+  std::array<RxStats, kNumDataTypes> rxStats_{};
+  std::array<std::string, kNumDataTypes> lastStrings_{};
+  DiagState diag_{};
+  int lastFixStatus_{-128};  // 未受信
+  double lastLatency_{0.0};
+  SteadyClock::time_point startTime_{};
+  SteadyClock::time_point lastAnyRx_{};
+  SteadyClock::time_point windowStart_{};
+  SteadyClock::time_point connectedAt_{};
+  SteadyClock::time_point lastDisconnect_{};
+  bool hasDisconnected_{false};
+  bool allStalled_{false};
+  uint64_t windowBytes_{0};
+  uint64_t connectCount_{0};
+  uint64_t connPackets_{0};
 }; // class HokuyoSpelRosNode
 
 int main(int argc, char** argv) {
